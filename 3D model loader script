@@ -1,0 +1,661 @@
+-- https://anyconv.com/fbx-to-obj-converter/
+-- Wait for player to load
+local PlayerService = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local player = PlayerService.LocalPlayer
+if not player then
+    player = PlayerService.PlayerAdded:Wait()
+end
+
+player:WaitForChild("PlayerGui")
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Parent = player.PlayerGui
+screenGui.ResetOnSpawn = false
+screenGui.Name = "GuiVersion34_PerfectPlane"
+
+local frame = Instance.new("Frame")
+frame.Parent = screenGui
+frame.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+frame.Size = UDim2.new(0, 220, 0, 165)
+frame.Position = UDim2.new(0.3, 0, 0.5, -82)
+frame.Active = true
+frame.Draggable = true
+
+-- Row 1: On (Toggle) / Fill
+local onButton = Instance.new("TextButton")
+onButton.Parent = frame
+onButton.BackgroundColor3 = Color3.fromRGB(120, 0, 0)
+onButton.Size = UDim2.new(0, 95, 0, 30)
+onButton.Position = UDim2.new(0, 10, 0, 15)
+onButton.Text = "Turn On"
+onButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+onButton.TextScaled = true
+onButton.Font = Enum.Font.SourceSansBold
+
+local fillButton = Instance.new("TextButton")
+fillButton.Parent = frame
+fillButton.BackgroundColor3 = Color3.fromRGB(100, 0, 100)
+fillButton.Size = UDim2.new(0, 95, 0, 30)
+fillButton.Position = UDim2.new(0, 115, 0, 15)
+fillButton.Text = "Fill: OFF"
+fillButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+fillButton.TextScaled = true
+
+-- Row 2: Next / Thickness Input
+local nextButton = Instance.new("TextButton")
+nextButton.Parent = frame
+nextButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+nextButton.Size = UDim2.new(0, 95, 0, 30)
+nextButton.Position = UDim2.new(0, 10, 0, 50)
+nextButton.Text = "Next"
+nextButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+nextButton.TextScaled = true
+
+local thickInput = Instance.new("TextBox")
+thickInput.Parent = frame
+thickInput.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+thickInput.Size = UDim2.new(0, 95, 0, 30)
+thickInput.Position = UDim2.new(0, 115, 0, 50)
+thickInput.TextColor3 = Color3.fromRGB(0, 255, 255)
+thickInput.PlaceholderText = "Thick"
+thickInput.Text = "0.5" 
+thickInput.TextScaled = true
+
+-- Row 3: Model Size Input / Move Block
+local sizeInput = Instance.new("TextBox")
+sizeInput.Parent = frame
+sizeInput.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+sizeInput.Size = UDim2.new(0, 70, 0, 30)
+sizeInput.Position = UDim2.new(0, 10, 0, 85)
+sizeInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+sizeInput.PlaceholderText = "Size"
+sizeInput.Text = "0.5" 
+sizeInput.TextScaled = true
+
+local moveButton = Instance.new("TextButton")
+moveButton.Parent = frame
+moveButton.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+moveButton.Size = UDim2.new(0, 120, 0, 30)
+moveButton.Position = UDim2.new(0, 90, 0, 85)
+moveButton.Text = "Move Block"
+moveButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+moveButton.TextScaled = true
+moveButton.Font = Enum.Font.SourceSansBold
+
+-- Row 4: Split / Destroy
+local splitButton = Instance.new("TextButton")
+splitButton.Parent = frame
+splitButton.BackgroundColor3 = Color3.fromRGB(120, 60, 0)
+splitButton.Size = UDim2.new(0, 95, 0, 30)
+splitButton.Position = UDim2.new(0, 10, 0, 120)
+splitButton.Text = "Split: OFF"
+splitButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+splitButton.TextScaled = true
+
+local destroyButton = Instance.new("TextButton")
+destroyButton.Parent = frame
+destroyButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+destroyButton.Size = UDim2.new(0, 95, 0, 30)
+destroyButton.Position = UDim2.new(0, 115, 0, 120)
+destroyButton.Text = "Destroy"
+destroyButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+destroyButton.TextScaled = true
+
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Parent = frame
+statusLabel.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+statusLabel.Size = UDim2.new(0, 220, 0, 30)
+statusLabel.Position = UDim2.new(0, 0, 0, -30)
+statusLabel.Text = "Status: Offline"
+statusLabel.TextColor3 = Color3.fromRGB(255, 0, 0)
+statusLabel.TextScaled = true
+
+-- ==========================================
+--        BUILDER LOGIC & SCANNING
+-- ==========================================
+
+local FOLDER_NAME = "KatanaReferenceFolder"
+local OBJ_URL = "https://raw.githubusercontent.com/ScpGuest666/Image-loader/refs/heads/main/Chibi%20Chick.obj"
+
+local lineThickness = 0.5
+local modelScale = 0.5
+local isBuilding = false
+local isMovingBlock = false
+local splitMode = false
+local fillMode = false
+local isSystemOn = false
+
+local cachedObjText = nil
+local parsedVertices = {}
+local parsedLayers = {}
+local currentLayerIndex = 1
+local globalCenterOffset = Vector3.new()
+local spawnCFrame = CFrame.new()
+
+local activeLines = {} 
+local activeFaces = {}
+local paletteData = {} 
+
+local function updateInputs()
+    lineThickness = tonumber(thickInput.Text) or 0.5
+    modelScale = tonumber(sizeInput.Text) or 0.5
+end
+
+local function setStatus(text, color)
+    statusLabel.Text = "Status: " .. text
+    statusLabel.TextColor3 = color
+end
+
+local function clearReference()
+    local folder = workspace:FindFirstChild(FOLDER_NAME)
+    if folder then folder:Destroy() end
+    activeLines = {}
+    activeFaces = {}
+    paletteData = {}
+end
+
+local function refreshPaletteUI()
+    local currentCounts = {}
+    for _, line in ipairs(activeLines) do
+        if not line.isFilled then
+            currentCounts[line.rounded] = (currentCounts[line.rounded] or 0) + 1
+        end
+    end
+    for len, data in pairs(paletteData) do
+        local remaining = currentCounts[len] or 0
+        local billboard = data.label.Parent
+        local part = billboard.Adornee
+        if remaining > 0 then
+            billboard.Enabled = true
+            if part then part.Transparency = 0 end
+            data.label.Text = string.format("%g, %g, %g\nx%d", lineThickness, lineThickness, len, remaining)
+        else
+            billboard.Enabled = false
+            if part then part.Transparency = 1 end
+        end
+    end
+end
+
+-- SMART BATCHED SCANNER (PERFECT PLANE PROJECTION)
+task.spawn(function()
+    local SCAN_BATCH_SIZE = 50 
+    local SCAN_STEP_DELAY = 0.03
+    while true do
+        if #activeLines > 0 and not isBuilding then
+            local overlapParams = OverlapParams.new()
+            overlapParams.FilterDescendantsInstances = {player.Character, workspace:FindFirstChild(FOLDER_NAME)}
+            overlapParams.FilterType = Enum.RaycastFilterType.Exclude
+            
+            -- 1. Scan Lines
+            for i = 1, #activeLines do
+                local line = activeLines[i]
+                if not line then continue end
+                
+                local isFilled = false
+                local detectedPart = nil
+                
+                pcall(function()
+                    local parts = workspace:GetPartBoundsInBox(line.cframe, Vector3.new(0.5, 0.5, line.rounded - 0.1), overlapParams)
+                    for _, p in ipairs(parts) do
+                        if p:IsA("BasePart") and p.Anchored then
+                            local pMax = math.max(p.Size.X, p.Size.Y, p.Size.Z)
+                            if math.abs(pMax - line.rounded) < 0.2 and (p.Position - line.cframe.Position).Magnitude < 0.5 then
+                                isFilled = true
+                                detectedPart = p
+                                break
+                            end
+                        end
+                    end
+                end)
+                
+                line.isFilled = isFilled
+                line.detectedPart = detectedPart
+                
+                if line.refPart and line.refPart.Parent then
+                    line.refPart.Transparency = isFilled and 1 or 0.4
+                end
+                if i % SCAN_BATCH_SIZE == 0 then task.wait(SCAN_STEP_DELAY) end
+            end
+            
+            -- 2. Update Face Guides (Perfect Plane Projection)
+            if fillMode then
+                for _, face in ipairs(activeFaces) do
+                    local filledLines = {}
+                    for _, line in ipairs(face.lines) do
+                        if line.isFilled and line.detectedPart then
+                            table.insert(filledLines, line)
+                        end
+                    end
+                    
+                    local center = face.defaultCenter
+                    local edge1 = face.defaultEdge
+                    local normal = face.originalNormal
+                    
+                    if #filledLines > 0 then
+                        -- Align rotation to the first physical block, but PROJECT it onto the perfect plane
+                        local rawEdge = (filledLines[1].worldP2 - filledLines[1].worldP1).Unit
+                        edge1 = (rawEdge - normal * rawEdge:Dot(normal)).Unit
+                        
+                        if #filledLines >= 2 then
+                            local uniquePoints = {}
+                            local function addPoint(p)
+                                for _, existing in ipairs(uniquePoints) do
+                                    if (existing.pos - p).Magnitude < 0.01 then
+                                        existing.count = existing.count + 1
+                                        return
+                                    end
+                                end
+                                table.insert(uniquePoints, {pos = p, count = 1})
+                            end
+                            
+                            for _, line in ipairs(filledLines) do
+                                addPoint(line.worldP1)
+                                addPoint(line.worldP2)
+                            end
+                            
+                            local extremities = {}
+                            for _, pt in ipairs(uniquePoints) do
+                                if pt.count == 1 then table.insert(extremities, pt.pos) end
+                            end
+                            
+                            if #filledLines == 2 and #extremities == 2 then
+                                center = (extremities[1] + extremities[2]) / 2
+                            else
+                                center = Vector3.new(0,0,0)
+                                for _, pt in ipairs(uniquePoints) do center += pt.pos end
+                                center /= #uniquePoints
+                            end
+                            
+                            -- PROJECT CENTER ONTO PERFECT PLANE TO PREVENT SINKING/RAISING
+                            local offset = center - face.defaultCenter
+                            local distFromPlane = offset:Dot(normal)
+                            center = center - (normal * distFromPlane)
+                        end
+                    end
+                    
+                    if face.guidePart then
+                        local backVector = edge1:Cross(normal).Unit
+                        face.guidePart.CFrame = CFrame.fromMatrix(center, edge1, normal, backVector)
+                        face.guidePart.Transparency = 0.5
+                    end
+                end
+            else
+                for _, face in ipairs(activeFaces) do
+                    if face.guidePart then face.guidePart.Transparency = 1 end
+                end
+            end
+            
+            refreshPaletteUI()
+            task.wait()
+        else
+            task.wait(1)
+        end
+    end
+end)
+
+local function drawLine(p1, p2, distance, parent)
+    local line = Instance.new("Part")
+    line.Anchored = true
+    line.CanCollide = false
+    line.CanTouch = false
+    line.CanQuery = false 
+    line.Size = Vector3.new(lineThickness, lineThickness, distance)
+    line.CFrame = CFrame.lookAt(p1, p2) * CFrame.new(0, 0, -distance / 2)
+    line.Material = Enum.Material.SmoothPlastic
+    line.Color = Color3.fromRGB(0, 180, 255)
+    line.Transparency = 0.4
+    line.Parent = parent
+    return line
+end
+
+local function createFaceGuide(center, normal, edgeDir, parent)
+    local guide = Instance.new("Part")
+    guide.Anchored = true
+    guide.CanCollide = false
+    guide.CanQuery = true
+    guide.Transparency = fillMode and 0.5 or 1
+    guide.Color = Color3.fromRGB(255, 0, 255)
+    guide.Material = Enum.Material.SmoothPlastic
+    guide.Size = Vector3.new(0.5, 0.5, 0.5)
+    guide.CFrame = CFrame.fromMatrix(center, edgeDir, normal, edgeDir:Cross(normal))
+    guide.Parent = parent
+    return guide
+end
+
+local function drawPalette(lengthCounts, folder, startPos, lookDir, rightDir)
+    local sortedLengths = {}
+    for len, _ in pairs(lengthCounts) do table.insert(sortedLengths, len) end
+    table.sort(sortedLengths)
+    for i, len in ipairs(sortedLengths) do
+        local count = lengthCounts[len]
+        local pos = startPos + (lookDir * ((i - 1) * 2))
+        local part = Instance.new("Part")
+        part.Anchored = true
+        part.CanCollide = false
+        part.CanQuery = false 
+        part.Size = Vector3.new(lineThickness, lineThickness, len)
+        part.CFrame = CFrame.lookAt(pos, pos + rightDir)
+        part.Material = Enum.Material.SmoothPlastic
+        part.Color = Color3.fromRGB(0, 255, 100)
+        part.Parent = folder
+        local billboard = Instance.new("BillboardGui")
+        billboard.Adornee = part
+        billboard.Size = UDim2.new(4, 0, 2, 0) 
+        billboard.StudsOffset = Vector3.new(0, 1.5, 0)
+        billboard.AlwaysOnTop = true
+        billboard.Parent = part
+        local textLabel = Instance.new("TextLabel")
+        textLabel.Size = UDim2.new(1, 0, 1, 0)
+        textLabel.BackgroundTransparency = 1
+        textLabel.Text = string.format("%g, %g, %g\nx%d", lineThickness, lineThickness, len, count)
+        textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+        textLabel.TextStrokeTransparency = 0
+        textLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+        textLabel.TextScaled = true
+        textLabel.Parent = billboard
+        paletteData[len] = { label = textLabel, total = count }
+    end
+end
+
+local function parseOBJ(objText)
+    parsedVertices = {}
+    parsedLayers = {}
+    local currentLayerFaces = {}
+    local minX, minY, minZ = math.huge, math.huge, math.huge
+    local maxX, maxY, maxZ = -math.huge, -math.huge, -math.huge
+    for line in objText:gmatch("[^\r\n]+") do
+        line = line:match("^%s*(.-)%s*$")
+        if line:sub(1, 2) == "v " then
+            local coords = {}
+            for val in line:gmatch("%S+") do if val ~= "v" then table.insert(coords, tonumber(val)) end end
+            if #coords >= 3 then
+                local v = Vector3.new(coords[1], coords[2], coords[3])
+                table.insert(parsedVertices, v)
+                minX = math.min(minX, v.X); minY = math.min(minY, v.Y); minZ = math.min(minZ, v.Z)
+                maxX = math.max(maxX, v.X); maxY = math.max(maxY, v.Y); maxZ = math.max(maxZ, v.Z)
+            end
+        elseif line:sub(1, 2) == "f " then
+            local faceVerts = {}
+            for block in line:gmatch("%S+") do
+                if block ~= "f" then
+                    local vIdx = tonumber(block:match("^([^/]+)"))
+                    if vIdx then if vIdx < 0 then vIdx = #parsedVertices + vIdx + 1 end table.insert(faceVerts, vIdx) end
+                end
+            end
+            if #faceVerts >= 3 then table.insert(currentLayerFaces, faceVerts) end
+        elseif line:sub(1, 2) == "o " or line:sub(1, 2) == "g " or line:sub(1, 7) == "usemtl " then
+            if #currentLayerFaces > 0 then table.insert(parsedLayers, currentLayerFaces) currentLayerFaces = {} end
+        end
+    end
+    if #currentLayerFaces > 0 then table.insert(parsedLayers, currentLayerFaces) end
+    globalCenterOffset = Vector3.new((minX + maxX)/2, (minY + maxY)/2, (minZ + maxZ)/2)
+end
+
+local function drawLayer(index)
+    clearReference()
+    updateInputs()
+    local folder = Instance.new("Folder", workspace)
+    folder.Name = FOLDER_NAME
+    local faces = parsedLayers[index]
+    if not faces then return end
+    setStatus("Drawing Layer " .. index, Color3.fromRGB(0, 255, 255))
+    nextButton.Text = "Next (" .. index .. "/" .. #parsedLayers .. ")"
+    
+    local edgeToLineData = {}
+    local lengthCounts = {}
+    local char = player.Character
+    local hrp = char.HumanoidRootPart
+    local paletteRightDir = hrp.CFrame.RightVector
+    local paletteLookDir = hrp.CFrame.LookVector
+    local paletteStartPos = hrp.Position + (paletteRightDir * 20)
+    
+    for _, face in ipairs(faces) do
+        local faceLines = {}
+        local faceWorldVerts = {}
+        
+        for i = 1, #face do
+            local idx1 = face[i]
+            local idx2 = face[i % #face + 1]
+            local localV1 = (parsedVertices[idx1] - globalCenterOffset)
+            local localV2 = (parsedVertices[idx2] - globalCenterOffset)
+            
+            if not splitMode or (localV1.X >= -0.01 or localV2.X >= -0.01) then
+                local worldP1 = spawnCFrame * (localV1 * modelScale)
+                local worldP2 = spawnCFrame * (localV2 * modelScale)
+                table.insert(faceWorldVerts, worldP1)
+                
+                local edgeKey = math.min(idx1, idx2) .. "_" .. math.max(idx1, idx2)
+                local lineData = edgeToLineData[edgeKey]
+                
+                if not lineData then
+                    local distance = (worldP2 - worldP1).Magnitude
+                    if distance >= 0.01 then
+                        local roundedDist = math.ceil(distance * 2) / 2
+                        lengthCounts[roundedDist] = (lengthCounts[roundedDist] or 0) + 1
+                        local linePart = drawLine(worldP1, worldP2, distance, folder)
+                        lineData = {
+                            cframe = linePart.CFrame, 
+                            rounded = roundedDist, 
+                            refPart = linePart, 
+                            isFilled = false,
+                            worldP1 = worldP1,
+                            worldP2 = worldP2
+                        }
+                        edgeToLineData[edgeKey] = lineData
+                        table.insert(activeLines, lineData)
+                    end
+                end
+                if lineData then table.insert(faceLines, lineData) end
+            end
+        end
+        
+        if #faceWorldVerts >= 3 then
+            local center = Vector3.new(0,0,0)
+            for _, v in ipairs(faceWorldVerts) do center += v end
+            center /= #faceWorldVerts
+            
+            local shortestEdgeLen = math.huge
+            local bestEdgeDir = (faceWorldVerts[2] - faceWorldVerts[1]).Unit
+            for i = 1, #faceWorldVerts do
+                local p1 = faceWorldVerts[i]
+                local p2 = faceWorldVerts[i % #faceWorldVerts + 1]
+                local dir = p2 - p1
+                local len = dir.Magnitude
+                if len < shortestEdgeLen and len > 0.01 then
+                    shortestEdgeLen = len
+                    bestEdgeDir = dir.Unit
+                end
+            end
+            
+            local normal = bestEdgeDir:Cross((faceWorldVerts[3] - faceWorldVerts[1]).Unit).Unit
+            if normal.Magnitude < 0.01 then normal = Vector3.new(0,1,0) end
+            
+            local guide = createFaceGuide(center, normal, bestEdgeDir, folder)
+            table.insert(activeFaces, {
+                lines = faceLines, 
+                guidePart = guide, 
+                originalNormal = normal,
+                defaultCenter = center,
+                defaultEdge = bestEdgeDir
+            })
+        end
+    end
+    
+    drawPalette(lengthCounts, folder, paletteStartPos, paletteLookDir, paletteRightDir)
+    setStatus("Online", Color3.fromRGB(0, 255, 0))
+end
+
+local function buildReference()
+    if isBuilding then return end
+    isBuilding = true
+    clearReference()
+    updateInputs()
+    if not cachedObjText then
+        setStatus("Fetching OBJ...", Color3.fromRGB(255, 255, 0))
+        local success, objText = pcall(function() return game:HttpGet(OBJ_URL) end)
+        if not success or not objText then setStatus("Fetch Failed!", Color3.fromRGB(255, 0, 0)) isBuilding = false return end
+        cachedObjText = objText
+    end
+    if #parsedLayers == 0 then parseOBJ(cachedObjText) end
+    local char = player.Character
+    if not char or not char:FindFirstChild("HumanoidRootPart") then setStatus("Char not found!", Color3.fromRGB(255, 0, 0)) isBuilding = false return end
+    local hrp = char.HumanoidRootPart
+    
+    local rayParams = RaycastParams.new()
+    rayParams.FilterDescendantsInstances = {char}
+    rayParams.FilterType = Enum.RaycastFilterType.Exclude
+    local result = workspace:Raycast(hrp.Position, Vector3.new(0, -100, 0), rayParams)
+    local spawnPos = result and (Vector3.new(result.Instance.Position.X, result.Position.Y + 5, result.Instance.Position.Z)) or (hrp.Position + Vector3.new(0, 5, 0))
+    local look = hrp.CFrame.LookVector
+    local angle = math.atan2(look.X, look.Z)
+    local snappedAngle = math.round(angle / (math.pi / 2)) * (math.pi / 2)
+    spawnCFrame = CFrame.new(spawnPos) * CFrame.Angles(0, snappedAngle, 0)
+    
+    drawLayer(currentLayerIndex)
+    isBuilding = false
+end
+
+-- ==========================================
+--        BUTTON CONNECTIONS
+-- ==========================================
+
+onButton.MouseButton1Click:Connect(function() 
+    isSystemOn = not isSystemOn
+    if isSystemOn then
+        onButton.Text = "Turn Off"
+        onButton.BackgroundColor3 = Color3.fromRGB(0, 120, 0)
+        task.spawn(buildReference)
+    else
+        onButton.Text = "Turn On"
+        onButton.BackgroundColor3 = Color3.fromRGB(120, 0, 0)
+        clearReference()
+        setStatus("Offline", Color3.fromRGB(255, 0, 0))
+    end
+end)
+
+fillButton.MouseButton1Click:Connect(function()
+    fillMode = not fillMode
+    fillButton.Text = fillMode and "Fill: ON" or "Fill: OFF"
+    fillButton.BackgroundColor3 = fillMode and Color3.fromRGB(255, 0, 255) or Color3.fromRGB(100, 0, 100)
+    for _, face in ipairs(activeFaces) do
+        if face.guidePart then
+            face.guidePart.Transparency = fillMode and 0.5 or 1
+        end
+    end
+end)
+
+splitButton.MouseButton1Click:Connect(function()
+    splitMode = not splitMode
+    splitButton.Text = splitMode and "Split: ON" or "Split: OFF"
+    splitButton.BackgroundColor3 = splitMode and Color3.fromRGB(0, 200, 200) or Color3.fromRGB(120, 60, 0)
+    if isSystemOn then task.spawn(buildReference) end
+end)
+
+nextButton.MouseButton1Click:Connect(function()
+    if isBuilding or #parsedLayers == 0 then return end
+    task.spawn(function()
+        isBuilding = true
+        currentLayerIndex = (currentLayerIndex % #parsedLayers) + 1
+        drawLayer(currentLayerIndex)
+        isBuilding = false
+    end)
+end)
+
+-- INSTANT TP PHYSICS LOGIC
+moveButton.MouseButton1Click:Connect(function()
+    if isMovingBlock then return end
+    local char = player.Character
+    if not char or not char:FindFirstChild("Humanoid") or not char:FindFirstChild("HumanoidRootPart") then return end
+    local humanoid = char.Humanoid
+    local hrp = char.HumanoidRootPart
+    local seat = humanoid.SeatPart
+    if not seat then setStatus("Sit on the block first!", Color3.fromRGB(255, 165, 0)) return end
+    
+    local connectedParts = seat:GetConnectedParts()
+    local targetBlock = nil
+    local maxDim = 0
+    for _, part in ipairs(connectedParts) do
+        if part ~= seat and not part:IsA("Seat") and not part:IsA("VehicleSeat") then
+            if part.Parent and not part.Parent:FindFirstChild("Humanoid") then
+                local dim = math.max(part.Size.X, part.Size.Y, part.Size.Z)
+                if dim > maxDim then maxDim = dim targetBlock = part end
+            end
+        end
+    end
+    if not targetBlock then setStatus("No block attached!", Color3.fromRGB(255, 0, 0)) return end
+    if targetBlock.Anchored then setStatus("Unanchor first!", Color3.fromRGB(255, 0, 0)) return end
+    
+    local size = targetBlock.Size
+    local maxDim = math.max(size.X, size.Y, size.Z)
+    local roundedMaxDim = math.ceil(maxDim * 2) / 2
+    local matchIndex = nil
+    for i, line in ipairs(activeLines) do
+        if line.rounded == roundedMaxDim and not line.isFilled then matchIndex = i break end
+    end
+    if not matchIndex then setStatus("No " .. roundedMaxDim .. " line!", Color3.fromRGB(255, 165, 0)) return end
+    
+    isMovingBlock = true
+    humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
+    seat.CanQuery = false 
+    local originalCollisions = {}
+    local function disableCollision(part)
+        if part:IsA("BasePart") then originalCollisions[part] = part.CanCollide part.CanCollide = false end
+    end
+    for _, part in ipairs(char:GetDescendants()) do disableCollision(part) end
+    for _, part in ipairs(seat:GetConnectedParts()) do disableCollision(part) end
+    
+    local pos = hrp.Position
+    local _, yRot, _ = hrp.CFrame:ToEulerAnglesYXZ()
+    local startCFrame = CFrame.new(pos) * CFrame.Angles(0, yRot, 0)
+    
+    local lineData = activeLines[matchIndex]
+    local targetBlockCFrame = lineData.cframe
+    if size.X > size.Y and size.X > size.Z then targetBlockCFrame *= CFrame.Angles(0, math.rad(90), 0)
+    elseif size.Y > size.X and size.Y > size.Z then targetBlockCFrame *= CFrame.Angles(math.rad(90), 0, 0) end
+    local seatOffset = targetBlock.CFrame:ToObjectSpace(seat.CFrame)
+    local targetSeatCFrame = targetBlockCFrame * seatOffset
+    
+    local anchorConnection
+    anchorConnection = targetBlock:GetPropertyChangedSignal("Anchored"):Connect(function()
+        if targetBlock.Anchored then
+            lineData.isFilled = true
+            lineData.detectedPart = targetBlock
+            if lineData.refPart then lineData.refPart.Transparency = 1 end
+            refreshPaletteUI()
+            anchorConnection:Disconnect()
+        end
+    end)
+    
+    local bv = Instance.new("BodyVelocity", seat)
+    bv.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+    bv.Velocity = Vector3.new(0, 0, 0)
+    local bg = Instance.new("BodyGyro", seat)
+    bg.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+    bg.P = 9e9 
+    bg.D = 9e9 
+    bg.CFrame = targetSeatCFrame
+    
+    seat.CFrame = targetSeatCFrame
+    setStatus("Arrived! Anchor & Jump.", Color3.fromRGB(0, 255, 0))
+    
+    local jumpConnection
+    jumpConnection = humanoid:GetPropertyChangedSignal("SeatPart"):Connect(function()
+        if not humanoid.SeatPart then
+            bv:Destroy() bg:Destroy() jumpConnection:Disconnect()
+            if anchorConnection then anchorConnection:Disconnect() end
+            if seat and seat.Parent then seat.CanQuery = true end
+            task.wait(0.1)
+            hrp.Velocity = Vector3.new(0,0,0)
+            hrp.RotVelocity = Vector3.new(0,0,0)
+            hrp.CFrame = startCFrame
+            for part, state in pairs(originalCollisions) do if part and part.Parent then part.CanCollide = state end end
+            task.wait(0.2)
+            humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, true)
+            setStatus("Returned.", Color3.fromRGB(0, 255, 0))
+            isMovingBlock = false
+        end
+    end)
+end)
+
+destroyButton.MouseButton1Click:Connect(function() clearReference() screenGui:Destroy() end)
