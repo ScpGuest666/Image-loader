@@ -1,0 +1,196 @@
+-- Services
+local UserInputService = game:GetService("UserInputService")
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+local mouse = player:GetMouse()
+
+-- Variables
+local scriptEnabled = false
+local lastClickTime = 0
+local lastTarget = nil
+local highlightStorage = {} 
+local selectedOrder = {} 
+local centerBlock = nil
+local inputConnection = nil
+
+-- GUI Setup
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "BABFT_3D_Aligner_V7"
+screenGui.Parent = player:WaitForChild("PlayerGui")
+screenGui.ResetOnSpawn = false
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 200, 0, 160)
+frame.Position = UDim2.new(0.1, 0, 0.5, -80)
+frame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+frame.BorderSizePixel = 2
+frame.Active = true
+frame.Draggable = true
+frame.Parent = screenGui
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 30)
+title.Text = "3D Curve Aligner"
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+title.Parent = frame
+
+-- Toggle Button
+local toggleBtn = Instance.new("TextButton")
+toggleBtn.Size = UDim2.new(0, 180, 0, 30)
+toggleBtn.Position = UDim2.new(0, 10, 0, 40)
+toggleBtn.Text = "Double Tap: OFF"
+toggleBtn.BackgroundColor3 = Color3.fromRGB(120, 30, 30)
+toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+toggleBtn.Parent = frame
+
+-- Reset Button
+local resetBtn = Instance.new("TextButton")
+resetBtn.Size = UDim2.new(0, 180, 0, 30)
+resetBtn.Position = UDim2.new(0, 10, 0, 75)
+resetBtn.Text = "Reset Highlights"
+resetBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 100)
+resetBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+resetBtn.Parent = frame
+
+-- Generate Button
+local genBtn = Instance.new("TextButton")
+genBtn.Size = UDim2.new(0, 180, 0, 30)
+genBtn.Position = UDim2.new(0, 10, 0, 110)
+genBtn.Text = "Generate Center"
+genBtn.BackgroundColor3 = Color3.fromRGB(100, 30, 120)
+genBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+genBtn.Parent = frame
+
+-- Destroy Button
+local destroyBtn = Instance.new("TextButton")
+destroyBtn.Size = UDim2.new(0, 200, 0, 15)
+destroyBtn.Position = UDim2.new(0, 0, 0, 145)
+destroyBtn.Text = "DESTROY SCRIPT"
+destroyBtn.BackgroundTransparency = 1
+destroyBtn.TextColor3 = Color3.fromRGB(150, 0, 0)
+destroyBtn.TextSize = 10
+destroyBtn.Parent = frame
+
+-- Helper: Check if block is a rod
+local function isRod(part)
+    if not part or not part:IsA("BasePart") then return false end
+    local s = part.Size
+    local d = {s.X, s.Y, s.Z}
+    table.sort(d)
+    return math.abs(d[1] - 0.5) < 0.05 and math.abs(d[2] - 0.5) < 0.05
+end
+
+-- Helper: Clear Visuals
+local function clearAll()
+    for part, hl in pairs(highlightStorage) do
+        if hl then hl:Destroy() end
+    end
+    highlightStorage = {}
+    selectedOrder = {}
+    if centerBlock then centerBlock:Destroy() end
+    centerBlock = nil
+end
+
+-- Helper: Toggle Outline (Occluded)
+local function toggleHighlight(part)
+    if highlightStorage[part] then
+        highlightStorage[part]:Destroy()
+        highlightStorage[part] = nil
+        for i, p in ipairs(selectedOrder) do
+            if p == part then table.remove(selectedOrder, i) break end
+        end
+    else
+        local hl = Instance.new("Highlight")
+        hl.FillTransparency = 1 
+        hl.OutlineColor = Color3.fromRGB(255, 255, 255)
+        hl.DepthMode = Enum.HighlightDepthMode.Occluded
+        hl.Adornee = part
+        hl.Parent = part
+        highlightStorage[part] = hl
+        table.insert(selectedOrder, part)
+    end
+end
+
+-- Logic: 3D Best-Fit Orientation
+local function calculateCenter()
+    if #selectedOrder < 3 then 
+        print("Select at least 3 rods for 3D alignment")
+        return 
+    end
+
+    -- 1. Calculate Average Position (The Center of the hole)
+    local sumPos = Vector3.new(0,0,0)
+    for _, p in ipairs(selectedOrder) do sumPos = sumPos + p.Position end
+    local centerPos = sumPos / #selectedOrder
+
+    -- 2. Calculate the Normal (The "Up" direction of the curved surface)
+    local p1 = selectedOrder[1].Position
+    local p2 = selectedOrder[2].Position
+    local p3 = selectedOrder[3].Position
+    
+    local v1 = (p2 - p1).Unit
+    local v2 = (p3 - p1).Unit
+    local normal = v1:Cross(v2).Unit
+    
+    -- 3. Align the block's "Right" axis to point directly at the first rod
+    -- This ensures the block's edges/faces are square with the frame
+    local right = (p1 - centerPos).Unit
+    local back = right:Cross(normal).Unit
+    local finalCFrame = CFrame.fromMatrix(centerPos, right, normal, back)
+
+    if centerBlock then centerBlock:Destroy() end
+    
+    centerBlock = Instance.new("Part")
+    centerBlock.Size = Vector3.new(0.5, 0.5, 0.5)
+    centerBlock.Color = Color3.fromRGB(180, 0, 255)
+    centerBlock.Material = Enum.Material.SmoothPlastic -- NO GLOW
+    centerBlock.Transparency = 0.5 
+    centerBlock.Anchored = true
+    centerBlock.CanCollide = true
+    centerBlock.CFrame = finalCFrame
+    centerBlock.Parent = workspace
+    centerBlock.Name = "BABFT_3D_Ref"
+    
+    local sb = Instance.new("SelectionBox")
+    sb.Adornee = centerBlock
+    sb.Color3 = Color3.fromRGB(255, 255, 255)
+    sb.LineThickness = 0.01
+    sb.Parent = centerBlock
+end
+
+-- Input Listener
+inputConnection = UserInputService.InputBegan:Connect(function(input, processed)
+    if processed or not scriptEnabled then return end
+    
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        local target = mouse.Target
+        local now = tick()
+        
+        if target and isRod(target) then
+            if target == lastTarget and (now - lastClickTime) < 0.5 then
+                toggleHighlight(target)
+                lastClickTime = 0
+            else
+                lastClickTime = now
+                lastTarget = target
+            end
+        end
+    end
+end)
+
+-- Buttons
+toggleBtn.MouseButton1Click:Connect(function()
+    scriptEnabled = not scriptEnabled
+    toggleBtn.Text = scriptEnabled and "Double Tap: ON" or "Double Tap: OFF"
+    toggleBtn.BackgroundColor3 = scriptEnabled and Color3.fromRGB(30, 120, 30) or Color3.fromRGB(120, 30, 30)
+end)
+
+resetBtn.MouseButton1Click:Connect(clearAll)
+genBtn.MouseButton1Click:Connect(calculateCenter)
+
+destroyBtn.MouseButton1Click:Connect(function()
+    if inputConnection then inputConnection:Disconnect() end
+    clearAll()
+    screenGui:Destroy()
+end)
