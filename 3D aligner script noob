@@ -1,0 +1,215 @@
+-- Services
+local UserInputService = game:GetService("UserInputService")
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+local mouse = player:GetMouse()
+
+-- Variables
+local scriptEnabled = false
+local lastClickTime = 0
+local lastTarget = nil
+local highlightStorage = {}
+local selectedOrder = {}
+local centerBlock = nil
+local inputConnection = nil
+
+-- GUI Setup
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "BABFT_3D_Aligner_V7"
+screenGui.Parent = player:WaitForChild("PlayerGui")
+screenGui.ResetOnSpawn = false
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 200, 0, 160)
+frame.Position = UDim2.new(0.1, 0, 0.5, -80)
+frame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+frame.BorderSizePixel = 2
+frame.Active = true
+frame.Draggable = true
+frame.Parent = screenGui
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 30)
+title.Text = "3D Curve Aligner"
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+title.Parent = frame
+
+local toggleBtn = Instance.new("TextButton")
+toggleBtn.Size = UDim2.new(0, 180, 0, 30)
+toggleBtn.Position = UDim2.new(0, 10, 0, 40)
+toggleBtn.Text = "Double Tap: OFF"
+toggleBtn.BackgroundColor3 = Color3.fromRGB(120, 30, 30)
+toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+toggleBtn.Parent = frame
+
+local resetBtn = Instance.new("TextButton")
+resetBtn.Size = UDim2.new(0, 180, 0, 30)
+resetBtn.Position = UDim2.new(0, 10, 0, 75)
+resetBtn.Text = "Reset Highlights"
+resetBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 100)
+resetBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+resetBtn.Parent = frame
+
+local genBtn = Instance.new("TextButton")
+genBtn.Size = UDim2.new(0, 180, 0, 30)
+genBtn.Position = UDim2.new(0, 10, 0, 110)
+genBtn.Text = "Generate Center"
+genBtn.BackgroundColor3 = Color3.fromRGB(100, 30, 120)
+genBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+genBtn.Parent = frame
+
+local destroyBtn = Instance.new("TextButton")
+destroyBtn.Size = UDim2.new(0, 200, 0, 15)
+destroyBtn.Position = UDim2.new(0, 0, 0, 145)
+destroyBtn.Text = "DESTROY SCRIPT"
+destroyBtn.BackgroundTransparency = 1
+destroyBtn.TextColor3 = Color3.fromRGB(150, 0, 0)
+destroyBtn.TextSize = 10
+destroyBtn.Parent = frame
+
+-- Helper: Detect 2x2xN rods (two dimensions equal to 2, third arbitrary)
+local function isRod(part)
+    if not part or not part:IsA("BasePart") then return false end
+    local s = part.Size
+    local dims = {s.X, s.Y, s.Z}
+    table.sort(dims)
+    local tolerance = 0.05
+    -- Check if the two smallest dimensions are approximately 2
+    return math.abs(dims[1] - 2) < tolerance and math.abs(dims[2] - 2) < tolerance
+end
+
+-- Helper: Clear all visuals
+local function clearAll()
+    for part, hl in pairs(highlightStorage) do
+        if hl then hl:Destroy() end
+    end
+    highlightStorage = {}
+    selectedOrder = {}
+    if centerBlock then centerBlock:Destroy() end
+    centerBlock = nil
+end
+
+-- Helper: Toggle highlight (white, occluded)
+local function toggleHighlight(part)
+    if highlightStorage[part] then
+        highlightStorage[part]:Destroy()
+        highlightStorage[part] = nil
+        for i, p in ipairs(selectedOrder) do
+            if p == part then
+                table.remove(selectedOrder, i)
+                break
+            end
+        end
+    else
+        local hl = Instance.new("Highlight")
+        hl.FillTransparency = 1
+        hl.OutlineColor = Color3.fromRGB(255, 255, 255)
+        hl.DepthMode = Enum.HighlightDepthMode.Occluded
+        hl.Adornee = part
+        hl.Parent = part
+        highlightStorage[part] = hl
+        table.insert(selectedOrder, part)
+    end
+end
+
+-- Core alignment logic (supports 2 or more rods)
+local function calculateCenter()
+    local count = #selectedOrder
+    if count < 2 then
+        print("Select at least 2 rods to align (two for a line, three+ for a plane)")
+        return
+    end
+
+    local centerPos
+    local finalCFrame
+
+    if count == 2 then
+        -- Two rods: place block at midpoint, oriented along the line between them
+        local pA = selectedOrder[1].Position
+        local pB = selectedOrder[2].Position
+        centerPos = (pA + pB) / 2
+        local direction = (pB - pA).Unit
+        -- Choose a stable up vector (global Y if direction is not vertical, else X)
+        local up = Vector3.new(0, 1, 0)
+        if math.abs(direction:Dot(up)) > 0.999 then
+            up = Vector3.new(1, 0, 0)
+        end
+        local right = up:Cross(direction).Unit
+        local finalUp = direction:Cross(right).Unit
+        finalCFrame = CFrame.fromMatrix(centerPos, direction, finalUp, right)
+    else
+        -- Three or more rods: fit a plane (normal = average surface orientation)
+        local sumPos = Vector3.new(0,0,0)
+        for _, p in ipairs(selectedOrder) do
+            sumPos = sumPos + p.Position
+        end
+        centerPos = sumPos / count
+
+        -- Use first three to compute a normal (robust enough for this use)
+        local p1 = selectedOrder[1].Position
+        local p2 = selectedOrder[2].Position
+        local p3 = selectedOrder[3].Position
+        local v1 = (p2 - p1).Unit
+        local v2 = (p3 - p1).Unit
+        local normal = v1:Cross(v2).Unit
+
+        -- Right axis points to the first selected rod
+        local right = (selectedOrder[1].Position - centerPos).Unit
+        local back = right:Cross(normal).Unit
+        finalCFrame = CFrame.fromMatrix(centerPos, right, normal, back)
+    end
+
+    -- Create/update center marker
+    if centerBlock then centerBlock:Destroy() end
+    centerBlock = Instance.new("Part")
+    centerBlock.Size = Vector3.new(0.5, 0.5, 0.5)
+    centerBlock.Color = Color3.fromRGB(180, 0, 255)
+    centerBlock.Material = Enum.Material.SmoothPlastic
+    centerBlock.Transparency = 0.5
+    centerBlock.Anchored = true
+    centerBlock.CanCollide = true
+    centerBlock.CFrame = finalCFrame
+    centerBlock.Parent = workspace
+    centerBlock.Name = "BABFT_3D_Ref"
+
+    local sb = Instance.new("SelectionBox")
+    sb.Adornee = centerBlock
+    sb.Color3 = Color3.fromRGB(255, 255, 255)
+    sb.LineThickness = 0.01
+    sb.Parent = centerBlock
+end
+
+-- Input listener (double‑tap on rods)
+inputConnection = UserInputService.InputBegan:Connect(function(input, processed)
+    if processed or not scriptEnabled then return end
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        local target = mouse.Target
+        local now = tick()
+        if target and isRod(target) then
+            if target == lastTarget and (now - lastClickTime) < 0.5 then
+                toggleHighlight(target)
+                lastClickTime = 0
+            else
+                lastClickTime = now
+                lastTarget = target
+            end
+        end
+    end
+end)
+
+-- Button events
+toggleBtn.MouseButton1Click:Connect(function()
+    scriptEnabled = not scriptEnabled
+    toggleBtn.Text = scriptEnabled and "Double Tap: ON" or "Double Tap: OFF"
+    toggleBtn.BackgroundColor3 = scriptEnabled and Color3.fromRGB(30, 120, 30) or Color3.fromRGB(120, 30, 30)
+end)
+
+resetBtn.MouseButton1Click:Connect(clearAll)
+genBtn.MouseButton1Click:Connect(calculateCenter)
+
+destroyBtn.MouseButton1Click:Connect(function()
+    if inputConnection then inputConnection:Disconnect() end
+    clearAll()
+    screenGui:Destroy()
+end)
